@@ -1,0 +1,125 @@
+#include <iostream>
+#include <string>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include "opencv.hpp"
+
+using namespace std;
+using namespace cv;
+
+
+Mat frame;
+atomic <bool> frame_ready{0};
+
+// function to read video
+void acquisition (VideoCapture &X, Mat &fra)
+{
+	while(1) {
+		X >> fra;
+		imshow( "COLOR IMG", fra );
+		int i=0;
+		if (i == 0)
+		{
+			imwrite("back_image.jpg", fra);
+			i++; 
+		}
+		if (waitKey(50) >=27) break;
+		frame_ready = 1;
+	}
+}
+
+void processing (Mat &Video)
+{
+	Mat morph;
+	int st = 2;
+	Mat element = getStructuringElement( MORPH_RECT, Size(st, st), Point(-1,-1));
+	Mat new_video;
+	Mat imGr;
+	Mat imBi;
+	Mat imgo, gray, threshed;
+	
+	Mat back_image = imread("back_image.jpg",CV_LOAD_IMAGE_COLOR);
+	while (1) {
+		while( !frame_ready.load( ) ) {
+			this_thread::sleep_for ( chrono::milliseconds (1) );
+		}
+
+		new_video = abs(back_image - Video);
+		//Mat imGr;
+
+		cvtColor(new_video, imGr ,CV_BGR2GRAY);
+		imshow("GRAYSCALE",imGr);
+		imwrite("new_image.jpg",imGr);
+		threshold(imGr,imBi,0,255,THRESH_BINARY + THRESH_OTSU);
+		morphologyEx(imBi, morph, MORPH_OPEN, element, Point(-1,-1), st, BORDER_CONSTANT, morphologyDefaultBorderValue());
+		imshow("BINARY",morph);
+		imgo = morph;
+
+		// Find contours
+		vector<vector<Point> > contours;
+		vector<Vec4i> hierarchy;
+		findContours(morph, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0));
+		
+	//  Find the max boundingRect of approxed-contours
+		double max_area = -1;
+		Rect max_rect;
+		int idx = -1;
+		vector<Point2f> contour_poly;
+	 
+
+    for (int i = 0; i < contours.size(); i++){
+        /// Approx the contour
+        Mat contour = Mat(contours[i]);
+        double arclen = arcLength(contour, true);
+        approxPolyDP(contour, contour_poly, 0.03*arclen, true);
+
+        /// Get the bounding box
+        Rect rect =  boundingRect(Mat(contour_poly));
+		
+
+		
+
+        /// Update the max_area_box
+        double area = rect.width*rect.height;
+        if(area>max_area){
+            max_area = area;
+            max_rect = rect;
+        }
+    }
+
+		// cout << max_rect<<endl;
+
+		/// Draw the max rect
+		Mat drawing = back_image.clone();
+		rectangle(drawing, max_rect.tl(), max_rect.br(), Scalar(0,255,255), 3);
+		
+		/// Crop
+		Mat Clean_Image = back_image(max_rect);
+		/// Display
+		imshow("drawing", drawing);
+		imshow("Clean_Image", Clean_Image);
+			if (waitKey(30) >=27) break;
+
+	}
+}
+
+int main()
+{
+
+    // Chargement de la video
+    VideoCapture vcap(0);
+    if(!vcap.isOpened()){
+		cout << "Erreur d'ouverture de la vidéo" << endl;
+		return -1;
+    }
+    
+		thread Toto(acquisition, ref(vcap), ref(frame) );
+        // Traitement du frame
+		thread Tata (processing, ref(frame));
+		Toto.join();
+		Tata.join();
+		
+
+    return 0;
+}
